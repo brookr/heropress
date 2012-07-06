@@ -1,0 +1,124 @@
+#!/usr/bin/env ruby
+require "thor"
+require "uri"
+
+class Hp < Thor
+  attr_accessor :url
+
+  desc "open", "Is this thing on? Open the production site."
+  def open
+    `heroku open`
+  end
+
+  desc "dev", "Get to work! Open the dev site."
+  def dev
+    `powder open`
+  end
+
+  desc "powerup", "Pow, you POS... Fix pow by adding key rvm info to the .powenv"
+  def powerup
+    puts `powder env GEM_HOME #{`echo $GEM_HOME`}`
+    puts `powder env MY_RUBY_HOME #{`echo $MY_RUBY_HOME`}`
+  end
+
+  desc "pull", "Overwrite the local db by sucking down production data."
+  def pull
+    confirm "Wait, you really want to overwrite your LOCAL database?"
+    cmd = "#{remote(url, :dump)} | #{local}"
+    puts "Sucking down delicious datas from production: \n\n#{cmd}\n\n"
+    `#{cmd}`
+    puts "Yum!"
+  end
+
+  desc "push", "Barf the local db contents into the production db, overwriting everything there."
+  def push
+    confirm "Um, are you sure you want to blast the PRODUCTION data?"
+    cmd = "#{local(:dump)} | #{remote(url)}"
+    puts "Shunting your local data into production: \n\n#{cmd}\n\n"
+    `#{cmd}`
+    puts "Feel the umph!"
+  end
+
+  desc "backup", "Take a dump...I mean MAKE a dump of the local database"
+  def backup
+    `mkdir -p #{File.join("db", "dumps")}`
+    cmd = "#{local(:dump)} > #{dump_file} && gzip #{File.join(dump_path("*#{stamp}*"))}"
+    puts "Got you covered, homie: \n\n#{cmd}\n\n"
+    `#{cmd}`
+    puts "Phew!"
+  end
+
+  desc "backup_production", "Save a copy of what is already out there to the local dump collection."
+  def backup_production
+    `mkdir -p #{File.join("db", "dumps")}`
+    cmd = "#{remote(url, :dump)} > #{dump_file} && gzip #{File.join(dump_path("*#{stamp}*"))}"
+    puts "Now securing off-site resources at agent request: \n\n#{cmd}\n\n"
+    `#{cmd}`
+    puts "Phew!"
+  end
+
+  desc "deploy", "Kick it all on up, CODE + DB, to Heroku."
+  def deploy
+    puts `heroku maintenance:on`
+    push
+    puts `git push #{heroku_remote} master`
+    puts `heroku maintenance:off`
+  end
+
+  desc "status", "Show the output of the internal methods"
+  def status
+    puts "Current timestamp: #{stamp}"
+    puts "Project name: #{project}"
+    puts "DB dump path: #{dump_path}"
+    puts "Heroku remote name: #{heroku_remote}"
+    puts "Remote URL: #{url}"
+    puts "Remote Connection: #{remote url}"
+    puts "Local Connection: #{local}"
+    puts "Current timestamp: #{stamp}"
+  end
+
+  private
+
+  def confirm(prompt)
+    puts prompt
+    abort "Get me out of here!" unless %w[ok sure y yes yup now doit go roger confirm lets].include? STDIN.gets.chomp
+  end
+
+  def heroku_remote
+    `git remote`.match(/^heroku|production/)
+  end
+
+  def url
+    @url ||= begin
+      puts "Looking up heroku db config..."
+      config = `heroku config -s`.to_s
+      ::URI.parse config.match(/^DATABASE_URL.*/).to_s.gsub("DATABASE_URL=", "")
+    end
+  end
+
+  def project
+    `pwd`.split("/").last.downcase.chomp
+  end
+
+  def stamp
+    @stamp ||= Time.now.strftime("%Y%m%d%H%M%S")
+  end
+
+  def dump_file(prod = false)
+    dump_path "#{"production_" if prod}#{project}_#{stamp}.sql"
+  end
+
+  def dump_path(filename = nil)
+    File.join("db", "dumps", "#{filename}")
+  end
+
+  def remote(url, dump = nil)
+    "mysql#{dump} --host #{url.host} --user #{url.user} --password=#{url.password} #{url.path.reverse.chop.reverse}".chomp
+  end
+
+  def local(dump = nil)
+    "mysql#{dump} --user root #{project}".chomp
+  end
+end
+
+Hp.start
